@@ -84,13 +84,13 @@ func TestKeyDeterministic(t *testing.T) {
 func TestKeySaltIsolation(t *testing.T) {
 	sim := openSimulator(t)
 
-	k1, err := NewKey(sim, []byte(SaltDaemon))
+	k1, err := NewKey(sim, []byte("nokku-daemon"))
 	if err != nil {
 		t.Fatalf("NewKey(daemon): %v", err)
 	}
 	defer func() { _ = k1.Close() }()
 
-	k2, err := NewKey(sim, []byte(SaltCLI))
+	k2, err := NewKey(sim, []byte("nokku-cli"))
 	if err != nil {
 		t.Fatalf("NewKey(cli): %v", err)
 	}
@@ -108,7 +108,7 @@ func TestKeySaltIsolation(t *testing.T) {
 func TestKeySSHSigner(t *testing.T) {
 	sim := openSimulator(t)
 
-	k, err := NewKey(sim, []byte(SaltHost))
+	k, err := NewKey(sim, []byte("nokku-host"))
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}

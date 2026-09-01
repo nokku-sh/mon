@@ -126,6 +126,17 @@ func NewSigner(opts SignerOptions) (Signer, error) {
 	return fallback, nil
 }
 
+// IdentityMethod reports the signing method persisted in store
+// (MethodTPM or MethodSoft) without loading or creating any key material.
+// It returns "" when no identity exists yet.
+func IdentityMethod(store Store) string {
+	st, err := loadState(store)
+	if err != nil || st == nil {
+		return ""
+	}
+	return st.Method
+}
+
 // loadState reads the persisted signer state. ErrNoState when absent.
 func loadState(store Store) (*state, error) {
 	data, err := store.Load()

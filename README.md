@@ -23,16 +23,21 @@ have exactly one implementation.
 
 ## Salt registry
 
-The salts below are a cross-binary contract. Two binaries running on the same
-machine must never derive keys with the same salt, or they would share an
-identity. Add new purposes here, never a local literal.
+Package `nokku` holds the constants shared by every Nokku binary. The salts
+below are a cross-binary contract: two binaries running on the same machine
+must never derive keys with the same salt, or they would share an identity.
+Add new purposes there, never a local literal.
 
 | Constant | Value | Used by |
 |---|---|---|
-| `tpm.SaltDaemon` | `nokku-daemon` | nokkud request signing |
-| `tpm.SaltCLI` | `nokku-cli` | nk request signing |
-| `tpm.SaltHost` | `nokku-host` | nokkud SSH host identity |
-| `tpm.SaltSSH` | `nokku-ssh` | nk SSH agent identity |
+| `nokku.SaltDaemon` | `nokku-daemon` | nokkud request signing |
+| `nokku.SaltCLI` | `nokku-cli` | nk request signing |
+| `nokku.SaltHost` | `nokku-host` | nokkud SSH host identity |
+| `nokku.SaltSSH` | `nokku-ssh` | nk SSH agent identity |
+
+Note: the signer state *file name* is deliberately not shared here. nokkud
+uses `state.json`, nk uses `signer.json`; renaming either would orphan
+existing state files on upgraded machines.
 
 ## Testing
 

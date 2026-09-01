@@ -65,8 +65,8 @@ func TestSignerTPM(t *testing.T) {
 func TestSignerSaltIsolation(t *testing.T) {
 	sim := openSimulator(t)
 
-	a := newTestSigner(t, sim, func(o *SignerOptions) { o.Salt = []byte(SaltDaemon) })
-	b := newTestSigner(t, sim, func(o *SignerOptions) { o.Salt = []byte(SaltCLI) })
+	a := newTestSigner(t, sim, func(o *SignerOptions) { o.Salt = []byte("nokku-daemon") })
+	b := newTestSigner(t, sim, func(o *SignerOptions) { o.Salt = []byte("nokku-cli") })
 	if a.Public().(*ecdsa.PublicKey).Equal(b.Public().(*ecdsa.PublicKey)) {
 		t.Fatal("distinct salts must derive distinct identities")
 	}

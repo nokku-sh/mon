@@ -12,7 +12,8 @@ have exactly one implementation.
   `dpop+jwt` proofs with an ECDSA P-256 signer, embedding the public JWK so
   the server can bind a session to the key thumbprint without pre-registration.
 - **id** - stable machine fingerprint from the hardware machine ID
-  (hostname fallback). Used only as the software signing key's wrap password.
+  (hostname fallback), HMAC'd so the raw identifier is never exposed. Used
+  only as the software signing key's wrap password.
 - **tpm** - machine-bound ECDSA P-256 signing identities:
   - `Key`: a deterministic TPM 2.0 primary key. The same salt on the same TPM
     always reproduces the same key pair; the private key never leaves the TPM.

@@ -11,7 +11,7 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 )
 
-func newTestSigner(t *testing.T, sim transport.TPMCloser, mutate func(*SignerOptions)) Signer {
+func newTestSigner(t *testing.T, _ transport.TPMCloser, mutate func(*SignerOptions)) Signer {
 	t.Helper()
 	opts := SignerOptions{
 		Salt:      []byte("test-signer"),

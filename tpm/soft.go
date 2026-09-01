@@ -38,7 +38,7 @@ func openSoft(opts SignerOptions, st *state) (Signer, error) {
 		}
 		if !opts.RecoverIdentity {
 			return nil, fmt.Errorf(
-				"%w: cannot unwrap the signing key: %v; re-enroll to create a new key",
+				"%w: cannot unwrap the signing key: %w; re-enroll to create a new key",
 				ErrIdentityChanged, err,
 			)
 		}

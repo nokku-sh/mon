@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"strings"
 )
 
 // machineIDKey is the HMAC key for the machine fingerprint. It exists to
@@ -36,9 +37,17 @@ func hostnameFallback() string {
 	}
 
 	id, err := machineID()
-	if err != nil {
+	if err != nil || isBlankMachineID(id) {
 		return hostname
 	}
 
 	return id
+}
+
+// isBlankMachineID reports whether id is a placeholder some platforms write
+// when no real machine ID exists (all zeros, or systemd's "uninitialized" in
+// containers and VMs). Such an ID is not unique, so it must never be used to
+// derive the signing key.
+func isBlankMachineID(id string) bool {
+	return id == "uninitialized" || strings.Trim(id, "0") == ""
 }

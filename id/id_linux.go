@@ -18,20 +18,13 @@ func machineID() (string, error) {
 		if err != nil {
 			continue
 		}
+		// Blank placeholders are rejected by the shared caller.
 		id := strings.ToLower(strings.TrimSpace(string(data)))
-		if id == "" || isBlankMachineID(id) {
+		if id == "" {
 			continue
 		}
 		return id, nil
 	}
 
 	return "", errors.New("machine-id not found")
-}
-
-// isBlankMachineID reports whether id is the placeholder systemd writes in
-// containers and VMs without a real machine ID (all zeros or the literal
-// "uninitialized"). Such an ID is not unique, so it must never be used to
-// derive the signing key.
-func isBlankMachineID(id string) bool {
-	return id == "uninitialized" || strings.Trim(id, "0") == ""
 }

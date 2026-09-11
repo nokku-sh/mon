@@ -24,12 +24,25 @@ func openSimulator(t *testing.T) transport.TPMCloser {
 	return sim
 }
 
+// sharedTPM hands the simulator to several signers without closing it, so one
+// test can open more than one identity against the same TPM. The simulator
+// itself is closed when the test ends.
+type sharedTPM struct{ transport.TPM }
+
+func (sharedTPM) Close() error { return nil }
+
+// simOpen returns a SignerOptions.OpenTPM backed by the simulator.
+func simOpen(t *testing.T) func() (transport.TPMCloser, error) {
+	sim := openSimulator(t)
+	return func() (transport.TPMCloser, error) { return sharedTPM{sim}, nil }
+}
+
 func TestKeySign(t *testing.T) {
 	sim := openSimulator(t)
 
-	k, err := NewKey(sim, []byte("test-key"))
+	k, err := newTPMKey(sim, []byte("test-key"))
 	if err != nil {
-		t.Fatalf("NewKey: %v", err)
+		t.Fatalf("newTPMKey: %v", err)
 	}
 	defer func() { _ = k.Close() }()
 
@@ -60,13 +73,13 @@ func TestKeyDeterministic(t *testing.T) {
 	sim := openSimulator(t)
 
 	salt := []byte("test-key")
-	k1, err := NewKey(sim, salt)
+	k1, err := newTPMKey(sim, salt)
 	if err != nil {
-		t.Fatalf("NewKey: %v", err)
+		t.Fatalf("newTPMKey: %v", err)
 	}
 	defer func() { _ = k1.Close() }()
 
-	k2, err := NewKey(sim, salt)
+	k2, err := newTPMKey(sim, salt)
 	if err != nil {
 		t.Fatalf("recreate key: %v", err)
 	}
@@ -84,15 +97,15 @@ func TestKeyDeterministic(t *testing.T) {
 func TestKeySaltIsolation(t *testing.T) {
 	sim := openSimulator(t)
 
-	k1, err := NewKey(sim, []byte("nokku-daemon"))
+	k1, err := newTPMKey(sim, []byte("nokku-daemon"))
 	if err != nil {
-		t.Fatalf("NewKey(daemon): %v", err)
+		t.Fatalf("newTPMKey(daemon): %v", err)
 	}
 	defer func() { _ = k1.Close() }()
 
-	k2, err := NewKey(sim, []byte("nokku-cli"))
+	k2, err := newTPMKey(sim, []byte("nokku-cli"))
 	if err != nil {
-		t.Fatalf("NewKey(cli): %v", err)
+		t.Fatalf("newTPMKey(cli): %v", err)
 	}
 	defer func() { _ = k2.Close() }()
 
@@ -108,9 +121,9 @@ func TestKeySaltIsolation(t *testing.T) {
 func TestKeySSHSigner(t *testing.T) {
 	sim := openSimulator(t)
 
-	k, err := NewKey(sim, []byte("nokku-host"))
+	k, err := newTPMKey(sim, []byte("nokku-host"))
 	if err != nil {
-		t.Fatalf("NewKey: %v", err)
+		t.Fatalf("newTPMKey: %v", err)
 	}
 	defer func() { _ = k.Close() }()
 

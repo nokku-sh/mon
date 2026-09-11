@@ -12,10 +12,36 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 )
 
+// primaryKey is a loaded deterministic primary key: a handle inside the TPM
+// plus its parsed public key.
+type primaryKey struct {
+	hnd  tpm2.TPMHandle
+	name tpm2.TPM2BName
+	pub  *ecdsa.PublicKey
+}
+
+// ecdsaSignature mirrors crypto/ecdsa's internal type for DER encoding.
+type ecdsaSignature struct {
+	R, S *big.Int
+}
+
+// Available reports whether a TPM 2.0 device can be opened on this machine.
+// The error carries the reason (missing device, permission denied, ...).
+func Available() error {
+	dev, err := openTPMDevice()
+	if err != nil {
+		return err
+	}
+	return dev.Close()
+}
+
 // eccSignTemplate returns the deterministic ECC P-256 signing template. The
-// key derives from the owner seed, the template, and the caller's salt, so
-// the same public key returns on every boot without storing anything. The
-// private key exists only inside the TPM.
+// key derives from the owner seed, this template, and the caller's salt, so
+// the same public key returns on every boot with nothing stored, and the
+// private key only ever exists inside the TPM.
+//
+// No auth value and no PCR policy, so any process that can open the TPM
+// device can use the identity. Control device access instead.
 func eccSignTemplate() tpm2.TPMTPublic {
 	return tpm2.TPMTPublic{
 		Type:    tpm2.TPMAlgECC,
@@ -49,14 +75,6 @@ func eccSignTemplate() tpm2.TPMTPublic {
 			},
 		),
 	}
-}
-
-// primaryKey is a loaded deterministic primary key: a handle inside the TPM
-// plus its parsed public key.
-type primaryKey struct {
-	hnd  tpm2.TPMHandle
-	name tpm2.TPM2BName
-	pub  *ecdsa.PublicKey
 }
 
 // createPrimary creates the deterministic ECC P-256 primary key for salt.
@@ -94,9 +112,9 @@ func signECDSA(r transport.TPM, key *primaryKey, digest []byte) ([]byte, error) 
 			Auth:   tpm2.PasswordAuth(nil),
 		},
 		Digest: tpm2.TPM2BDigest{Buffer: digest},
-		// InScheme is left NULL: the key template already pins the ECDSA
-		// scheme. The validation ticket must be explicit. A zero ticket
-		// has Tag=0, which the TPM rejects as an invalid structure tag.
+		// InScheme stays NULL, the key template pins the ECDSA scheme. The
+		// validation ticket must be explicit, a zero ticket has Tag=0, which
+		// the TPM rejects as an invalid structure tag.
 		Validation: tpm2.TPMTTKHashCheck{
 			Tag:       tpm2.TPMSTHashCheck,
 			Hierarchy: tpm2.TPMRHNull,
@@ -113,26 +131,11 @@ func signECDSA(r transport.TPM, key *primaryKey, digest []byte) ([]byte, error) 
 	return asn1MarshalECDSA(ecc.SignatureR.Buffer, ecc.SignatureS.Buffer)
 }
 
-// ecdsaSignature mirrors crypto/ecdsa's internal type for DER encoding.
-type ecdsaSignature struct {
-	R, S *big.Int
-}
-
 func asn1MarshalECDSA(r, s []byte) ([]byte, error) {
 	return asn1.Marshal(ecdsaSignature{
 		R: new(big.Int).SetBytes(r),
 		S: new(big.Int).SetBytes(s),
 	})
-}
-
-// Available reports whether a TPM 2.0 device can be opened on this machine.
-// The error carries the reason (missing device, permission denied, ...).
-func Available() error {
-	dev, err := openTPMDevice()
-	if err != nil {
-		return err
-	}
-	return dev.Close()
 }
 
 func publicToECDSA(pub tpm2.TPM2BPublic) (*ecdsa.PublicKey, error) {

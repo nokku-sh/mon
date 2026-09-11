@@ -11,12 +11,16 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 )
 
-func newTestSigner(t *testing.T, _ transport.TPMCloser, mutate func(*SignerOptions)) Signer {
+func newTestSigner(
+	t *testing.T,
+	open func() (transport.TPMCloser, error),
+	mutate func(*SignerOptions),
+) Signer {
 	t.Helper()
 	opts := SignerOptions{
 		Salt:      []byte("test-signer"),
-		Store:     NewFileStore(t.TempDir() + "/signer.json"),
-		MachineID: func() string { return "test-machine" },
+		StatePath: t.TempDir() + "/signer.json",
+		OpenTPM:   open,
 	}
 	if mutate != nil {
 		mutate(&opts)
@@ -30,9 +34,9 @@ func newTestSigner(t *testing.T, _ transport.TPMCloser, mutate func(*SignerOptio
 }
 
 func TestSignerTPM(t *testing.T) {
-	sim := openSimulator(t)
+	open := simOpen(t)
 
-	s1 := newTestSigner(t, sim, nil)
+	s1 := newTestSigner(t, open, nil)
 	pub1 := s1.Public()
 	if s1.Method() != MethodTPM {
 		t.Fatalf("Method() = %q, want %q", s1.Method(), MethodTPM)
@@ -44,7 +48,7 @@ func TestSignerTPM(t *testing.T) {
 	// The primary key is derived deterministically from the TPM seed, so a
 	// fresh signer must produce the same public key (nothing persisted but
 	// the public half).
-	s2 := newTestSigner(t, sim, nil)
+	s2 := newTestSigner(t, open, nil)
 	if !pub1.(*ecdsa.PublicKey).Equal(s2.Public().(*ecdsa.PublicKey)) {
 		t.Fatal("TPM public key is not deterministic across restarts")
 	}
@@ -63,31 +67,32 @@ func TestSignerTPM(t *testing.T) {
 // TestSignerSaltIsolation verifies distinct salts yield distinct identities
 // on the same TPM.
 func TestSignerSaltIsolation(t *testing.T) {
-	sim := openSimulator(t)
+	open := simOpen(t)
 
-	a := newTestSigner(t, sim, func(o *SignerOptions) { o.Salt = []byte("nokku-daemon") })
-	b := newTestSigner(t, sim, func(o *SignerOptions) { o.Salt = []byte("nokku-cli") })
+	a := newTestSigner(t, open, func(o *SignerOptions) { o.Salt = []byte("nokku-daemon") })
+	b := newTestSigner(t, open, func(o *SignerOptions) { o.Salt = []byte("nokku-cli") })
 	if a.Public().(*ecdsa.PublicKey).Equal(b.Public().(*ecdsa.PublicKey)) {
 		t.Fatal("distinct salts must derive distinct identities")
 	}
 }
 
 // TestSignerIdentityChanged verifies a persisted public key that no longer
-// matches the machine fails with ErrIdentityChanged, unless recovery is on.
+// matches the machine fails with ErrIdentityChanged, unless the policy
+// recreates the identity.
 func TestSignerIdentityChanged(t *testing.T) {
-	openSimulator(t)
+	open := simOpen(t)
 	dir := t.TempDir() + "/signer.json"
 
-	newOpts := func(recoverID bool) SignerOptions {
+	newOpts := func(policy IdentityChangePolicy) SignerOptions {
 		return SignerOptions{
-			Salt:            []byte("test-signer"),
-			Store:           NewFileStore(dir),
-			MachineID:       func() string { return "test-machine" },
-			RecoverIdentity: recoverID,
+			Salt:             []byte("test-signer"),
+			StatePath:        dir,
+			OnIdentityChange: policy,
+			OpenTPM:          open,
 		}
 	}
 
-	s, err := NewSigner(newOpts(false))
+	s, err := NewSigner(newOpts(FailOnIdentityChange))
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
@@ -97,27 +102,27 @@ func TestSignerIdentityChanged(t *testing.T) {
 
 	// Simulate a machine identity change: the persisted public half no
 	// longer matches the derived key.
-	st, err := loadState(newOpts(false).Store)
+	st, err := loadState(dir)
 	if err != nil {
 		t.Fatalf("loadState: %v", err)
 	}
 	st.PubKey = "-----BEGIN PUBLIC KEY-----\nCHANGED\n-----END PUBLIC KEY-----\n"
-	if err = saveState(newOpts(false).Store, st); err != nil {
+	if err = saveState(dir, st); err != nil {
 		t.Fatalf("saveState: %v", err)
 	}
 
-	if _, err = NewSigner(newOpts(false)); !errors.Is(err, ErrIdentityChanged) {
+	if _, err = NewSigner(newOpts(FailOnIdentityChange)); !errors.Is(err, ErrIdentityChanged) {
 		t.Fatalf("NewSigner strict = %v, want ErrIdentityChanged", err)
 	}
 
-	// With recovery the signer replaces the key and persists the new one.
-	s2, err := NewSigner(newOpts(true))
+	// With RecreateIdentity the signer replaces the key and persists it.
+	s2, err := NewSigner(newOpts(RecreateIdentity))
 	if err != nil {
 		t.Fatalf("NewSigner recover: %v", err)
 	}
 	defer func() { _ = s2.Close() }()
 
-	st2, err := loadState(newOpts(false).Store)
+	st2, err := loadState(dir)
 	if err != nil {
 		t.Fatalf("reload state: %v", err)
 	}
@@ -126,12 +131,12 @@ func TestSignerIdentityChanged(t *testing.T) {
 	}
 }
 
-func TestSignerRequiresSaltAndStore(t *testing.T) {
-	if _, err := NewSigner(SignerOptions{Salt: []byte("s")}); err == nil {
-		t.Fatal("NewSigner without store succeeded, want error")
-	}
-	if _, err := NewSigner(SignerOptions{Store: NewFileStore(t.TempDir())}); err == nil {
+func TestSignerRequiresSaltAndPath(t *testing.T) {
+	if _, err := NewSigner(SignerOptions{StatePath: t.TempDir() + "/signer.json"}); err == nil {
 		t.Fatal("NewSigner without salt succeeded, want error")
+	}
+	if _, err := NewSigner(SignerOptions{Salt: []byte("s")}); err == nil {
+		t.Fatal("NewSigner without state path succeeded, want error")
 	}
 }
 
@@ -139,8 +144,7 @@ func TestSoftSignerRoundTrip(t *testing.T) {
 	dir := t.TempDir() + "/signer.json"
 
 	s1, err := openSoft(SignerOptions{
-		Store:     NewFileStore(dir),
-		MachineID: func() string { return "test-machine" },
+		StatePath: dir,
 	}, nil)
 	if err != nil {
 		t.Fatalf("create signer: %v", err)
@@ -164,7 +168,7 @@ func TestSoftSignerRoundTrip(t *testing.T) {
 	}
 
 	// Reloading from disk must yield the same key.
-	st, err := loadState(NewFileStore(dir))
+	st, err := loadState(dir)
 	if err != nil {
 		t.Fatalf("load state: %v", err)
 	}
@@ -172,8 +176,7 @@ func TestSoftSignerRoundTrip(t *testing.T) {
 		t.Fatal("no state written")
 	}
 	s2, err := openSoft(SignerOptions{
-		Store:     NewFileStore(dir),
-		MachineID: func() string { return "test-machine" },
+		StatePath: dir,
 	}, st)
 	if err != nil {
 		t.Fatalf("reload signer: %v", err)
@@ -185,12 +188,11 @@ func TestSoftSignerRoundTrip(t *testing.T) {
 }
 
 // TestSoftSignerWrongMachine verifies a changed machine identity fails
-// strictly, or is recovered when RecoverIdentity is set.
+// strictly, or is replaced when the policy recreates the identity.
 func TestSoftSignerWrongMachine(t *testing.T) {
 	dir := t.TempDir() + "/signer.json"
 	opts := SignerOptions{
-		Store:     NewFileStore(dir),
-		MachineID: func() string { return "test-machine" },
+		StatePath: dir,
 	}
 
 	s, err := openSoft(opts, nil)
@@ -199,7 +201,7 @@ func TestSoftSignerWrongMachine(t *testing.T) {
 	}
 	_ = s.Close()
 
-	st, err := loadState(opts.Store)
+	st, err := loadState(dir)
 	if err != nil {
 		t.Fatalf("load state: %v", err)
 	}
@@ -211,7 +213,7 @@ func TestSoftSignerWrongMachine(t *testing.T) {
 		t.Fatalf("openSoft strict = %v, want ErrIdentityChanged", err)
 	}
 
-	opts.RecoverIdentity = true
+	opts.OnIdentityChange = RecreateIdentity
 	s2, err := openSoft(opts, st)
 	if err != nil {
 		t.Fatalf("openSoft recover: %v", err)
@@ -219,7 +221,7 @@ func TestSoftSignerWrongMachine(t *testing.T) {
 	defer func() { _ = s2.Close() }()
 
 	// The replacement key must be persisted.
-	st2, err := loadState(opts.Store)
+	st2, err := loadState(dir)
 	if err != nil {
 		t.Fatalf("reload state: %v", err)
 	}

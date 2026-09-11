@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -51,8 +50,7 @@ func NewProofer(key crypto.Signer, opts ProoferOptions) (*Proofer, error) {
 	}, nil
 }
 
-// ATH returns the base64url-encoded SHA-256 hash of token, the "ath" claim a
-// proof carries alongside the access token.
+// ATH returns the base64url-encoded SHA-256 hash of token, the "ath" claim.
 func ATH(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
@@ -60,13 +58,17 @@ func ATH(token string) string {
 
 // Sign builds a compact DPoP proof for htm/htu. ath is the access token hash
 // from ATH, or "" when no token exists yet (enrollment, device-flow token
-// polls); nonce is the server nonce once one has been learned.
+// polls). nonce is the server nonce once one has been learned.
 func (p *Proofer) Sign(htm, htu, ath, nonce string) (string, error) {
+	jti, err := newJTI()
+	if err != nil {
+		return "", fmt.Errorf("dpop: generate jti: %w", err)
+	}
 	claims := map[string]any{
 		"htm": htm,
 		"htu": htu,
 		"iat": p.now().Unix(),
-		"jti": newJTI(),
+		"jti": jti,
 	}
 	if nonce != "" {
 		claims["nonce"] = nonce
@@ -92,12 +94,12 @@ func (p *Proofer) Sign(htm, htu, ath, nonce string) (string, error) {
 	return jws.CompactSerialize()
 }
 
-// newJTI returns a fresh, unique proof identifier.
-func newJTI() string {
+// newJTI returns a fresh, unique proof identifier. A CSPRNG failure is fatal:
+// a predictable jti would weaken replay detection.
+func newJTI() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		// Extremely rare. Fall back to a time-based identifier.
-		return strconv.FormatInt(time.Now().UnixNano(), 10)
+		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

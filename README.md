@@ -15,7 +15,8 @@ have exactly one implementation.
   nonce and canonical-URL learning, one retry on a stale nonce) and the
   HTTP/2-only TLS 1.3 transport both binaries share.
 - **fsutil** - atomic file writes: temp file, fsync, rename, parent-directory
-  fsync, plus `WriteIfChanged` and `FileExists`.
+  fsync, plus `WriteIfChanged`, `FileExists`, and the JSON state helpers
+  `LoadJSON` and `SaveJSON`.
 - **id** - stable machine fingerprint from the hardware machine ID
   (hostname fallback), HMAC'd so the raw identifier is never exposed. Used
   only as the software signing key's wrap password.
@@ -32,6 +33,18 @@ machine runs several Nokku binaries, their salts must differ per purpose or
 two binaries would silently derive the same identity from the same TPM. The
 salt registry is therefore a convention, not code: each binary owns its
 constants, and new purposes get new constants there.
+
+The registry today:
+
+| Salt                | Binary and purpose       |
+| ------------------- | ------------------------ |
+| `nokku-daemon`      | nokkud DPoP proofing key |
+| `nokku-daemon-host` | nokkud host key          |
+| `nokku-cli`         | nk DPoP proofing key     |
+| `nokku-cli-ssh`     | nk user SSH signing key  |
+
+Never change a registered salt. It would silently rotate every machine
+identity derived from it.
 
 ## Machine identity trust model
 

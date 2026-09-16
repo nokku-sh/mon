@@ -11,7 +11,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/nokku-sh/nokkud
+        - github.com/nokku-sh/mon
     golines:
       max-len: 120
 

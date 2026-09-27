@@ -14,9 +14,6 @@ have exactly one implementation.
 - **dpopclient** - the DPoP-authenticated connect client stack (interceptors,
   nonce and canonical-URL learning, one retry on a stale nonce) and the
   HTTP/2-only TLS 1.3 transport both binaries share.
-- **fsutil** - atomic file writes: temp file, fsync, rename, parent-directory
-  fsync, plus `WriteIfChanged`, `FileExists`, and the JSON state helpers
-  `LoadJSON` and `SaveJSON`.
 - **id** - stable machine fingerprint from the hardware machine ID
   (hostname fallback), HMAC'd so the raw identifier is never exposed. Used
   only as the software signing key's wrap password.

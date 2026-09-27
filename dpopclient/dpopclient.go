@@ -162,7 +162,10 @@ func (c *Client) WrapStreamingClient(
 	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
 		c.refreshNonce(ctx)
 		conn := next(ctx, spec)
-		_ = c.sign(conn.RequestHeader(), spec.Procedure)
+		if err := c.sign(conn.RequestHeader(), spec.Procedure); err != nil {
+			// The stream fails at the server, this keeps the reason.
+			slog.Warn("dpop: sign stream request", "procedure", spec.Procedure, "error", err)
+		}
 		return conn
 	}
 }

@@ -29,8 +29,7 @@ type ProoferOptions struct {
 // Proofer signs DPoP proofs with an ECDSA P-256 [crypto.Signer]. The signer
 // must sign digests directly (both the TPM and software signers do).
 type Proofer struct {
-	opaque jose.OpaqueSigner
-	jwk    *jose.JSONWebKey
+	signer jose.Signer
 	now    func() time.Time
 }
 
@@ -43,11 +42,16 @@ func NewProofer(key crypto.Signer, opts ProoferOptions) (*Proofer, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Proofer{
-		opaque: cryptosigner.Opaque(key),
-		jwk:    &jose.JSONWebKey{Key: pub},
-		now:    opts.Now,
-	}, nil
+	signerOpts := (&jose.SignerOptions{}).WithType("dpop+jwt")
+	signerOpts.EmbedJWK = true
+	signer, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.ES256, Key: cryptosigner.Opaque(key)},
+		signerOpts,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dpop: build signer: %w", err)
+	}
+	return &Proofer{signer: signer, now: opts.Now}, nil
 }
 
 // ATH returns the base64url-encoded SHA-256 hash of token, the "ath" claim.
@@ -81,13 +85,7 @@ func (p *Proofer) Sign(htm, htu, ath, nonce string) (string, error) {
 		return "", err
 	}
 
-	opts := (&jose.SignerOptions{}).WithType("dpop+jwt")
-	opts.EmbedJWK = true
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: p.opaque}, opts)
-	if err != nil {
-		return "", err
-	}
-	jws, err := signer.Sign(payload)
+	jws, err := p.signer.Sign(payload)
 	if err != nil {
 		return "", fmt.Errorf("dpop: sign: %w", err)
 	}

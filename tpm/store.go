@@ -24,7 +24,9 @@ func loadStateFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-// saveStateFile writes the state file atomically, skipping unchanged content.
+// saveStateFile writes the state file atomically and durably, skipping
+// unchanged content. A software key lives only in this file, so a torn write
+// after a power cut would lose the machine identity.
 func saveStateFile(path string, data []byte) error {
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
 		return nil
@@ -36,7 +38,11 @@ func saveStateFile(path string, data []byte) error {
 	}
 	tmpName := tmp.Name()
 
-	if _, err = tmp.Write(data); err != nil {
+	// CreateTemp makes the file 0600, which the rename keeps.
+	if _, err = tmp.Write(data); err == nil {
+		err = tmp.Sync()
+	}
+	if err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("tpm: write temp state file: %w", err)
@@ -44,11 +50,6 @@ func saveStateFile(path string, data []byte) error {
 	if err = tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("tpm: close temp state file: %w", err)
-	}
-	// CreateTemp already made it 0600, keep that across the rename.
-	if err = os.Chmod(tmpName, 0o600); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("tpm: chmod state file: %w", err)
 	}
 	if err = os.Rename(tmpName, path); err != nil {
 		_ = os.Remove(tmpName)

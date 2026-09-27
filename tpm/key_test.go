@@ -40,9 +40,9 @@ func simOpen(t *testing.T) func() (transport.TPMCloser, error) {
 func TestKeySign(t *testing.T) {
 	sim := openSimulator(t)
 
-	k, err := newTPMKey(sim, []byte("test-key"))
+	k, err := newTPMSigner(sharedTPM{sim}, []byte("test-key"))
 	if err != nil {
-		t.Fatalf("newTPMKey: %v", err)
+		t.Fatalf("newTPMSigner: %v", err)
 	}
 	defer func() { _ = k.Close() }()
 
@@ -73,13 +73,13 @@ func TestKeyDeterministic(t *testing.T) {
 	sim := openSimulator(t)
 
 	salt := []byte("test-key")
-	k1, err := newTPMKey(sim, salt)
+	k1, err := newTPMSigner(sharedTPM{sim}, salt)
 	if err != nil {
-		t.Fatalf("newTPMKey: %v", err)
+		t.Fatalf("newTPMSigner: %v", err)
 	}
 	defer func() { _ = k1.Close() }()
 
-	k2, err := newTPMKey(sim, salt)
+	k2, err := newTPMSigner(sharedTPM{sim}, salt)
 	if err != nil {
 		t.Fatalf("recreate key: %v", err)
 	}
@@ -97,15 +97,15 @@ func TestKeyDeterministic(t *testing.T) {
 func TestKeySaltIsolation(t *testing.T) {
 	sim := openSimulator(t)
 
-	k1, err := newTPMKey(sim, []byte("nokku-daemon"))
+	k1, err := newTPMSigner(sharedTPM{sim}, []byte("nokku-daemon"))
 	if err != nil {
-		t.Fatalf("newTPMKey(daemon): %v", err)
+		t.Fatalf("newTPMSigner(daemon): %v", err)
 	}
 	defer func() { _ = k1.Close() }()
 
-	k2, err := newTPMKey(sim, []byte("nokku-cli"))
+	k2, err := newTPMSigner(sharedTPM{sim}, []byte("nokku-cli"))
 	if err != nil {
-		t.Fatalf("newTPMKey(cli): %v", err)
+		t.Fatalf("newTPMSigner(cli): %v", err)
 	}
 	defer func() { _ = k2.Close() }()
 
@@ -121,9 +121,9 @@ func TestKeySaltIsolation(t *testing.T) {
 func TestKeySSHSigner(t *testing.T) {
 	sim := openSimulator(t)
 
-	k, err := newTPMKey(sim, []byte("nokku-host"))
+	k, err := newTPMSigner(sharedTPM{sim}, []byte("nokku-host"))
 	if err != nil {
-		t.Fatalf("newTPMKey: %v", err)
+		t.Fatalf("newTPMSigner: %v", err)
 	}
 	defer func() { _ = k.Close() }()
 

@@ -12,14 +12,6 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 )
 
-// primaryKey is a loaded deterministic primary key: a handle inside the TPM
-// plus its parsed public key.
-type primaryKey struct {
-	hnd  tpm2.TPMHandle
-	name tpm2.TPM2BName
-	pub  *ecdsa.PublicKey
-}
-
 // ecdsaSignature mirrors crypto/ecdsa's internal type for DER encoding.
 type ecdsaSignature struct {
 	R, S *big.Int
@@ -80,7 +72,10 @@ func eccSignTemplate() tpm2.TPMTPublic {
 // createPrimary creates the deterministic ECC P-256 primary key for salt.
 // Nothing is persisted: the same salt on the same TPM reproduces the same
 // key pair until the TPM's owner seed changes (TPM clear or replacement).
-func createPrimary(r transport.TPM, salt []byte) (*primaryKey, error) {
+func createPrimary(
+	r transport.TPM,
+	salt []byte,
+) (tpm2.TPMHandle, tpm2.TPM2BName, *ecdsa.PublicKey, error) {
 	rsp, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.TPMRHOwner,
 		InSensitive: tpm2.TPM2BSensitiveCreate{
@@ -91,24 +86,24 @@ func createPrimary(r transport.TPM, salt []byte) (*primaryKey, error) {
 		InPublic: tpm2.New2B(eccSignTemplate()),
 	}.Execute(r)
 	if err != nil {
-		return nil, fmt.Errorf("create primary key: %w", err)
+		return 0, tpm2.TPM2BName{}, nil, fmt.Errorf("create primary key: %w", err)
 	}
 
 	pub, err := publicToECDSA(rsp.OutPublic)
 	if err != nil {
 		_, _ = tpm2.FlushContext{FlushHandle: rsp.ObjectHandle}.Execute(r)
-		return nil, err
+		return 0, tpm2.TPM2BName{}, nil, err
 	}
-	return &primaryKey{hnd: rsp.ObjectHandle, name: rsp.Name, pub: pub}, nil
+	return rsp.ObjectHandle, rsp.Name, pub, nil
 }
 
 // signECDSA signs a SHA-256 digest with the loaded key and returns the
 // DER-encoded signature.
-func signECDSA(r transport.TPM, key *primaryKey, digest []byte) ([]byte, error) {
+func signECDSA(r transport.TPM, hnd tpm2.TPMHandle, name tpm2.TPM2BName, digest []byte) ([]byte, error) {
 	rsp, err := tpm2.Sign{
 		KeyHandle: tpm2.AuthHandle{
-			Handle: key.hnd,
-			Name:   key.name,
+			Handle: hnd,
+			Name:   name,
 			Auth:   tpm2.PasswordAuth(nil),
 		},
 		Digest: tpm2.TPM2BDigest{Buffer: digest},

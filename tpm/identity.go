@@ -89,12 +89,6 @@ type state struct {
 	Data   []byte `json:"data,omitempty"`
 }
 
-// tpmIdentity adapts a TPM key to the [Signer] interface.
-type tpmIdentity struct {
-	key *tpmKey
-	pem []byte
-}
-
 func (o SignerOptions) recreate() bool {
 	return o.OnIdentityChange == RecreateIdentity
 }
@@ -191,21 +185,11 @@ func openTPMIdentity(opts SignerOptions, st *state) (Signer, error) {
 	if err != nil {
 		return nil, err
 	}
-	k, err := newTPMKey(dev, opts.Salt)
+	s, err := newTPMSigner(dev, opts.Salt)
 	if err != nil {
 		_ = dev.Close()
 		return nil, err
 	}
-	// The signer opened the device, so it owns it: Close releases both the
-	// TPM handle and the transport.
-	k.closer = dev
-
-	pubPEM, err := pemEncodePublicKey(k.Public())
-	if err != nil {
-		_ = k.Close()
-		return nil, err
-	}
-	s := &tpmIdentity{key: k, pem: pubPEM}
 
 	// The persisted public half detects a TPM clear or replacement: the
 	// derived key changes even though nothing was stored.
@@ -227,18 +211,6 @@ func openTPMIdentity(opts SignerOptions, st *state) (Signer, error) {
 	}
 	return s, nil
 }
-
-func (s *tpmIdentity) Public() crypto.PublicKey { return s.key.Public() }
-
-func (s *tpmIdentity) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return s.key.Sign(r, digest, opts)
-}
-
-func (s *tpmIdentity) Method() string { return MethodTPM }
-
-func (s *tpmIdentity) PEM() []byte { return append([]byte(nil), s.pem...) }
-
-func (s *tpmIdentity) Close() error { return s.key.Close() }
 
 // pemEncodePublicKey returns the PKIX PEM encoding of pub.
 func pemEncodePublicKey(pub crypto.PublicKey) ([]byte, error) {

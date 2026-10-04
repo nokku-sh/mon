@@ -84,9 +84,12 @@ type SignerOptions struct {
 type state struct {
 	Method string `json:"method"`
 	PubKey string `json:"pubkey"`
-	Salt   []byte `json:"salt,omitempty"`
-	Nonce  []byte `json:"nonce,omitempty"`
-	Data   []byte `json:"data,omitempty"`
+	// KDF names how the wrap key of a software key was derived. Empty is the
+	// scrypt of state written before the field existed.
+	KDF   string `json:"kdf,omitempty"`
+	Salt  []byte `json:"salt,omitempty"`
+	Nonce []byte `json:"nonce,omitempty"`
+	Data  []byte `json:"data,omitempty"`
 }
 
 func (o SignerOptions) recreate() bool {

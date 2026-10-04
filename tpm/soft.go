@@ -6,7 +6,9 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -21,7 +23,13 @@ import (
 // Software keys are wrapped at rest with a key derived from the machine's
 // identity, so a copied state directory yields nothing usable on another
 // machine. This stops stolen or cloned state, not root on the machine.
+//
+// The machine identity is public, so a slow KDF protects nothing. State from
+// before kdfHKDF used scrypt, which cost every open about 100ms and 32 MiB.
+// Such state is rewrapped the first time it is opened.
 const (
+	kdfHKDF = "hkdf-sha256"
+
 	softScryptN = 1 << 15
 	softScryptR = 8
 	softScryptP = 1
@@ -55,6 +63,12 @@ func openSoft(opts SignerOptions, st *state) (Signer, error) {
 	if st != nil && len(st.Salt) > 0 && len(st.Nonce) > 0 && len(st.Data) > 0 {
 		key, err := unwrapSoftKey(st)
 		if err == nil {
+			if st.KDF != kdfHKDF {
+				// The old wrap still opens, so a failed rewrap is not fatal.
+				if _, err = storeSoftKey(opts.StatePath, key); err != nil {
+					slog.Warn("tpm: rewrapping the software signing key failed, keeping the old wrap", "error", err)
+				}
+			}
 			return &softSigner{key: key, pem: []byte(st.PubKey)}, nil
 		}
 		if !opts.recreate() {
@@ -75,6 +89,16 @@ func createSoft(opts SignerOptions) (Signer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tpm: generate key: %w", err)
 	}
+	pubPEM, err := storeSoftKey(opts.StatePath, key)
+	if err != nil {
+		return nil, err
+	}
+	return &softSigner{key: key, pem: pubPEM}, nil
+}
+
+// storeSoftKey wraps key to the machine identity and persists it. It returns
+// the PEM of the public half.
+func storeSoftKey(path string, key *ecdsa.PrivateKey) ([]byte, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("tpm: marshal key: %w", err)
@@ -88,7 +112,7 @@ func createSoft(opts SignerOptions) (Signer, error) {
 	if _, err = rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("tpm: generate nonce: %w", err)
 	}
-	data, err := wrapSoftKey(der, salt, nonce)
+	data, err := wrapSoftKey(der, kdfHKDF, salt, nonce)
 	if err != nil {
 		return nil, err
 	}
@@ -100,25 +124,32 @@ func createSoft(opts SignerOptions) (Signer, error) {
 	st := &state{
 		Method: MethodSoft,
 		PubKey: string(pubPEM),
+		KDF:    kdfHKDF,
 		Salt:   salt,
 		Nonce:  nonce,
 		Data:   data,
 	}
-	if err = saveState(opts.StatePath, st); err != nil {
+	if err = saveState(path, st); err != nil {
 		return nil, err
 	}
-	return &softSigner{key: key, pem: pubPEM}, nil
+	return pubPEM, nil
 }
 
 // softWrapKey derives the AES key that wraps the software key. The machine
 // fingerprint is public, so this stops a copied state file, not a local reader.
-func softWrapKey(salt []byte) ([]byte, error) {
-	return scrypt.Key([]byte(id.MachineID()), salt, softScryptN, softScryptR, softScryptP, 32)
+func softWrapKey(kdf string, salt []byte) ([]byte, error) {
+	switch kdf {
+	case kdfHKDF:
+		return hkdf.Key(sha256.New, []byte(id.MachineID()), salt, "mon software key wrap", 32)
+	case "":
+		return scrypt.Key([]byte(id.MachineID()), salt, softScryptN, softScryptR, softScryptP, 32)
+	}
+	return nil, fmt.Errorf("tpm: unknown key derivation %q", kdf)
 }
 
 // newSoftGCM builds the AEAD for the wrapping key derived from salt.
-func newSoftGCM(salt []byte) (cipher.AEAD, error) {
-	key, err := softWrapKey(salt)
+func newSoftGCM(kdf string, salt []byte) (cipher.AEAD, error) {
+	key, err := softWrapKey(kdf, salt)
 	if err != nil {
 		return nil, err
 	}
@@ -133,24 +164,20 @@ func newSoftGCM(salt []byte) (cipher.AEAD, error) {
 	return gcm, nil
 }
 
-func wrapSoftKey(plaintext, salt, nonce []byte) ([]byte, error) {
-	gcm, err := newSoftGCM(salt)
+func wrapSoftKey(plaintext []byte, kdf string, salt, nonce []byte) ([]byte, error) {
+	gcm, err := newSoftGCM(kdf, salt)
 	if err != nil {
 		return nil, err
 	}
 	return gcm.Seal(nil, nonce, plaintext, nil), nil
 }
 
-func unwrapSoftData(data, salt, nonce []byte) ([]byte, error) {
-	gcm, err := newSoftGCM(salt)
+func unwrapSoftKey(st *state) (*ecdsa.PrivateKey, error) {
+	gcm, err := newSoftGCM(st.KDF, st.Salt)
 	if err != nil {
 		return nil, err
 	}
-	return gcm.Open(nil, nonce, data, nil)
-}
-
-func unwrapSoftKey(st *state) (*ecdsa.PrivateKey, error) {
-	plain, err := unwrapSoftData(st.Data, st.Salt, st.Nonce)
+	plain, err := gcm.Open(nil, st.Nonce, st.Data, nil)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"unwrap signing key (%w), the machine identity changed (e.g. after a reinstall or VM clone)",

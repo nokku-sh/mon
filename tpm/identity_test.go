@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"errors"
 	"testing"
 
@@ -78,22 +77,21 @@ func TestSignerSaltIsolation(t *testing.T) {
 }
 
 // TestSignerIdentityChanged verifies a persisted public key that no longer
-// matches the machine fails with ErrIdentityChanged, unless the policy
-// recreates the identity.
+// matches the machine fails with ErrIdentityChanged, unless Recreate is set.
 func TestSignerIdentityChanged(t *testing.T) {
 	open := simOpen(t)
 	dir := t.TempDir() + "/signer.json"
 
-	newOpts := func(policy IdentityChangePolicy) SignerOptions {
+	newOpts := func(recreate bool) SignerOptions {
 		return SignerOptions{
-			Salt:             []byte("test-signer"),
-			StatePath:        dir,
-			OnIdentityChange: policy,
-			OpenTPM:          open,
+			Salt:      []byte("test-signer"),
+			StatePath: dir,
+			Recreate:  recreate,
+			OpenTPM:   open,
 		}
 	}
 
-	s, err := NewSigner(newOpts(FailOnIdentityChange))
+	s, err := NewSigner(newOpts(false))
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
@@ -112,12 +110,12 @@ func TestSignerIdentityChanged(t *testing.T) {
 		t.Fatalf("saveState: %v", err)
 	}
 
-	if _, err = NewSigner(newOpts(FailOnIdentityChange)); !errors.Is(err, ErrIdentityChanged) {
+	if _, err = NewSigner(newOpts(false)); !errors.Is(err, ErrIdentityChanged) {
 		t.Fatalf("NewSigner strict = %v, want ErrIdentityChanged", err)
 	}
 
-	// With RecreateIdentity the signer replaces the key and persists it.
-	s2, err := NewSigner(newOpts(RecreateIdentity))
+	// With Recreate the signer replaces the key and persists it.
+	s2, err := NewSigner(newOpts(true))
 	if err != nil {
 		t.Fatalf("NewSigner recover: %v", err)
 	}
@@ -189,7 +187,7 @@ func TestSoftSignerRoundTrip(t *testing.T) {
 }
 
 // TestSoftSignerWrongMachine verifies a changed machine identity fails
-// strictly, or is replaced when the policy recreates the identity.
+// strictly, or is replaced when Recreate is set.
 func TestSoftSignerWrongMachine(t *testing.T) {
 	dir := t.TempDir() + "/signer.json"
 	opts := SignerOptions{
@@ -214,7 +212,7 @@ func TestSoftSignerWrongMachine(t *testing.T) {
 		t.Fatalf("openSoft strict = %v, want ErrIdentityChanged", err)
 	}
 
-	opts.OnIdentityChange = RecreateIdentity
+	opts.Recreate = true
 	s2, err := openSoft(opts, st)
 	if err != nil {
 		t.Fatalf("openSoft recover: %v", err)
@@ -228,61 +226,5 @@ func TestSoftSignerWrongMachine(t *testing.T) {
 	}
 	if st2.PubKey != string(s2.PEM()) {
 		t.Fatal("recovered key was not persisted")
-	}
-}
-
-// TestSoftSignerRewrapsLegacyState verifies state from before the kdf field
-// still opens as the same key, and is rewrapped so later opens skip scrypt.
-func TestSoftSignerRewrapsLegacyState(t *testing.T) {
-	path := t.TempDir() + "/signer.json"
-	opts := SignerOptions{StatePath: path}
-
-	s, err := openSoft(opts, nil)
-	if err != nil {
-		t.Fatalf("create signer: %v", err)
-	}
-	key := s.(*softSigner).key
-	_ = s.Close()
-
-	// Write the key the way an older version did: scrypt, no kdf field.
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	legacy, err := loadState(path)
-	if err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-	legacy.KDF = ""
-	if legacy.Data, err = wrapSoftKey(der, "", legacy.Salt, legacy.Nonce); err != nil {
-		t.Fatalf("wrap legacy key: %v", err)
-	}
-	if err = saveState(path, legacy); err != nil {
-		t.Fatalf("save legacy state: %v", err)
-	}
-
-	s2, err := openSoft(opts, legacy)
-	if err != nil {
-		t.Fatalf("open legacy state: %v", err)
-	}
-	defer func() { _ = s2.Close() }()
-	if !key.PublicKey.Equal(s2.Public()) {
-		t.Fatal("the legacy state opened as another key")
-	}
-
-	rewrapped, err := loadState(path)
-	if err != nil {
-		t.Fatalf("reload state: %v", err)
-	}
-	if rewrapped.KDF != kdfHKDF {
-		t.Fatalf("kdf after open = %q, want %q", rewrapped.KDF, kdfHKDF)
-	}
-	s3, err := openSoft(opts, rewrapped)
-	if err != nil {
-		t.Fatalf("open rewrapped state: %v", err)
-	}
-	defer func() { _ = s3.Close() }()
-	if !key.PublicKey.Equal(s3.Public()) {
-		t.Fatal("the rewrapped state opened as another key")
 	}
 }

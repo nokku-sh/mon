@@ -1,7 +1,7 @@
 package tpm
 
 import (
-	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,24 +12,39 @@ import (
 // errNoState signals that no signer state exists at the configured path.
 var errNoState = errors.New("tpm: no signer state")
 
-// loadStateFile reads the state file. errNoState when it does not exist.
-func loadStateFile(path string) ([]byte, error) {
+// state is the on-disk representation of a signer. TPM keys store only the
+// public half, software keys also carry their wrapped private key.
+type state struct {
+	Method string `json:"method"`
+	PubKey string `json:"pubkey"`
+	Salt   []byte `json:"salt,omitempty"`
+	Nonce  []byte `json:"nonce,omitempty"`
+	Data   []byte `json:"data,omitempty"`
+}
+
+// loadState reads the persisted signer state. errNoState when absent.
+func loadState(path string) (*state, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, errNoState
 	}
 	if err != nil {
-		return nil, fmt.Errorf("tpm: read state file: %w", err)
+		return nil, fmt.Errorf("tpm: read signer state: %w", err)
 	}
-	return data, nil
+	var st state
+	if err = json.Unmarshal(data, &st); err != nil {
+		return nil, fmt.Errorf("tpm: parse signer state: %w", err)
+	}
+	return &st, nil
 }
 
-// saveStateFile writes the state file atomically and durably, skipping
-// unchanged content. A software key lives only in this file, so a torn write
-// after a power cut would lose the machine identity.
-func saveStateFile(path string, data []byte) error {
-	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
-		return nil
+// saveState writes the signer state atomically and durably. A software key
+// lives only in this file, so a torn write after a power cut would lose the
+// machine identity.
+func saveState(path string, st *state) error {
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return fmt.Errorf("tpm: serialize signer state: %w", err)
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".signer-*.tmp")

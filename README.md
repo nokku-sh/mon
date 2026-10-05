@@ -47,7 +47,7 @@ identity derived from it.
 
 A TPM-backed identity cannot be extracted: the private key never leaves the
 device. The primary is created without an auth value or PCR policy, so any
-process that can open the TPM device (typically `/dev/tpmrm0`) can use the
+process that can open the TPM device (`/dev/tpmrm0` on Linux) can use the
 identity. Restrict the device to the owning daemon's uid. A stored auth value
 would have to live beside the caller's state file and buys nothing, and PCR
 sealing breaks on kernel and firmware updates.
@@ -55,10 +55,9 @@ sealing breaks on kernel and firmware updates.
 The software fallback wraps the key with a key derived from the machine's
 public fingerprint (`id.MachineID`). That stops a key file copied to another
 machine from working; it is not encryption against anyone who can read the
-file on the machine itself. Set `SignerOptions.OnIdentityChange` to
-`FailOnIdentityChange` where the identity is bound to a server-side
-registration, so a TPM clear or a re-image makes the caller re-enroll instead
-of silently presenting a new key.
+file on the machine itself. Leave `SignerOptions.Recreate` unset where the
+identity is bound to a server-side registration, so a TPM clear or a re-image
+makes the caller re-enroll instead of silently presenting a new key.
 
 ## Testing
 

@@ -3,6 +3,7 @@ package tpm
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"encoding/asn1"
 	"errors"
 	"fmt"
@@ -28,13 +29,16 @@ func Available() error {
 }
 
 // eccSignTemplate returns the deterministic ECC P-256 signing template. The
-// key derives from the owner seed, this template, and the caller's salt, so
-// the same public key returns on every boot with nothing stored, and the
-// private key only ever exists inside the TPM.
+// key derives from the owner seed and this template, so the same public key
+// returns on every boot with nothing stored, and the private key only ever
+// exists inside the TPM. The salt sits in the unique field, the part of the
+// template the spec reserves for telling primaries apart.
 //
 // No auth value and no PCR policy, so any process that can open the TPM
 // device can use the identity. Control device access instead.
-func eccSignTemplate() tpm2.TPMTPublic {
+func eccSignTemplate(salt []byte) tpm2.TPMTPublic {
+	// Hashed so a salt of any length fits a P-256 coordinate.
+	unique := sha256.Sum256(salt)
 	return tpm2.TPMTPublic{
 		Type:    tpm2.TPMAlgECC,
 		NameAlg: tpm2.TPMAlgSHA256,
@@ -62,7 +66,7 @@ func eccSignTemplate() tpm2.TPMTPublic {
 		Unique: tpm2.NewTPMUPublicID(
 			tpm2.TPMAlgECC,
 			&tpm2.TPMSECCPoint{
-				X: tpm2.TPM2BECCParameter{Buffer: []byte{}},
+				X: tpm2.TPM2BECCParameter{Buffer: unique[:]},
 				Y: tpm2.TPM2BECCParameter{Buffer: []byte{}},
 			},
 		),
@@ -78,12 +82,7 @@ func createPrimary(
 ) (tpm2.TPMHandle, tpm2.TPM2BName, *ecdsa.PublicKey, error) {
 	rsp, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.TPMRHOwner,
-		InSensitive: tpm2.TPM2BSensitiveCreate{
-			Sensitive: &tpm2.TPMSSensitiveCreate{
-				Data: tpm2.NewTPMUSensitiveCreate(&tpm2.TPM2BSensitiveData{Buffer: salt}),
-			},
-		},
-		InPublic: tpm2.New2B(eccSignTemplate()),
+		InPublic:      tpm2.New2B(eccSignTemplate(salt)),
 	}.Execute(r)
 	if err != nil {
 		return 0, tpm2.TPM2BName{}, nil, fmt.Errorf("create primary key: %w", err)

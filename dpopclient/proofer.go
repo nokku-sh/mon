@@ -5,21 +5,11 @@ import (
 	"github.com/nokku-sh/mon/tpm"
 )
 
-// NewProofer builds a DPoP proofer over a mon/tpm machine signer. The salt
-// namespaces the derived key and must come from the registry documented in
-// the mon README.
-func NewProofer(
-	salt []byte,
-	statePath string,
-	requireTPM bool,
-	onIdentityChange tpm.IdentityChangePolicy,
-) (*dpop.Proofer, error) {
-	signer, err := tpm.NewSigner(tpm.SignerOptions{
-		Salt:             salt,
-		StatePath:        statePath,
-		RequireTPM:       requireTPM,
-		OnIdentityChange: onIdentityChange,
-	})
+// NewProofer builds a DPoP proofer over a mon/tpm machine signer. The salt in
+// opts namespaces the derived key and must come from the registry documented
+// in the mon README.
+func NewProofer(opts tpm.SignerOptions) (*dpop.Proofer, error) {
+	signer, err := tpm.NewSigner(opts)
 	if err != nil {
 		return nil, err
 	}

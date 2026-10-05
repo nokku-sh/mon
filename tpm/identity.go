@@ -11,7 +11,6 @@ package tpm
 import (
 	"crypto"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -44,21 +43,6 @@ type Signer interface {
 	PEM() []byte
 }
 
-// IdentityChangePolicy decides what [NewSigner] does when the persisted
-// identity no longer matches the machine.
-type IdentityChangePolicy int
-
-const (
-	// FailOnIdentityChange returns [ErrIdentityChanged] and creates nothing.
-	// The zero value, so a caller that forgets to choose still gets the safe
-	// behavior for an unattended daemon.
-	FailOnIdentityChange IdentityChangePolicy = iota
-	// RecreateIdentity replaces the key and its state. Interactive callers
-	// use this so a re-image does not brick them. The caller must invalidate
-	// anything derived from the old public key, such as certificates.
-	RecreateIdentity
-)
-
 // SignerOptions configures [NewSigner].
 type SignerOptions struct {
 	// Salt namespaces the key derivation. Two purposes sharing a salt on one
@@ -70,30 +54,16 @@ type SignerOptions struct {
 	StatePath string
 	// RequireTPM refuses the software fallback.
 	RequireTPM bool
-	// OnIdentityChange decides what a changed machine identity does. Leave
-	// it unset where the identity is bound to a server-side registration.
-	OnIdentityChange IdentityChangePolicy
+	// Recreate replaces the key and its state when the persisted identity no
+	// longer matches the machine, instead of failing with
+	// [ErrIdentityChanged]. Interactive callers set it so a re-image does not
+	// brick them, and must then invalidate anything derived from the old
+	// public key, such as certificates. Leave it unset where the identity is
+	// bound to a server-side registration.
+	Recreate bool
 	// OpenTPM opens the TPM transport, defaulting to the platform device.
 	// Tests inject a simulator. The signer owns the returned closer.
 	OpenTPM func() (transport.TPMCloser, error)
-}
-
-// state is the on-disk representation of a signer. The JSON shape matches the
-// state files written by nokkud and nk before this package existed, so
-// existing state keeps loading.
-type state struct {
-	Method string `json:"method"`
-	PubKey string `json:"pubkey"`
-	// KDF names how the wrap key of a software key was derived. Empty is the
-	// scrypt of state written before the field existed.
-	KDF   string `json:"kdf,omitempty"`
-	Salt  []byte `json:"salt,omitempty"`
-	Nonce []byte `json:"nonce,omitempty"`
-	Data  []byte `json:"data,omitempty"`
-}
-
-func (o SignerOptions) recreate() bool {
-	return o.OnIdentityChange == RecreateIdentity
 }
 
 // NewSigner loads or creates the machine's signing identity: a TPM key when
@@ -155,28 +125,6 @@ func IdentityMethod(statePath string) string {
 	return st.Method
 }
 
-// loadState reads the persisted signer state. errNoState when absent.
-func loadState(path string) (*state, error) {
-	data, err := loadStateFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var st state
-	if err = json.Unmarshal(data, &st); err != nil {
-		return nil, fmt.Errorf("tpm: parse signer state: %w", err)
-	}
-	return &st, nil
-}
-
-// saveState persists the signer state.
-func saveState(path string, st *state) error {
-	data, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		return fmt.Errorf("tpm: serialize signer state: %w", err)
-	}
-	return saveStateFile(path, data)
-}
-
 // openTPMIdentity opens the TPM device and derives the signing key for
 // opts.Salt, verifying it against the persisted public half when st exists.
 func openTPMIdentity(opts SignerOptions, st *state) (Signer, error) {
@@ -197,7 +145,7 @@ func openTPMIdentity(opts SignerOptions, st *state) (Signer, error) {
 	// The persisted public half detects a TPM clear or replacement: the
 	// derived key changes even though nothing was stored.
 	if st != nil && st.PubKey != "" && st.PubKey != string(s.pem) {
-		if !opts.recreate() {
+		if !opts.Recreate {
 			_ = s.Close()
 			return nil, fmt.Errorf(
 				"%w: the TPM key changed (TPM cleared or replaced), re-enroll to register the new key",

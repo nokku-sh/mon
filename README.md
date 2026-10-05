@@ -21,6 +21,8 @@ have exactly one implementation.
   persisted identity, TPM-backed when a TPM 2.0 is usable with a
   machine-wrapped software fallback otherwise. `NewSigner` loads or creates
   it and `SignerOptions.Salt` namespaces the key per binary and purpose.
+  `SignerOptions.Enclave` plugs in another hardware key store, such as the
+  macOS Secure Enclave, tried after the TPM and before the software key.
 
 ## Salts
 
@@ -51,6 +53,14 @@ process that can open the TPM device (`/dev/tpmrm0` on Linux) can use the
 identity. Restrict the device to the owning daemon's uid. A stored auth value
 would have to live beside the caller's state file and buys nothing, and PCR
 sealing breaks on kernel and firmware updates.
+
+An enclave identity (`SignerOptions.Enclave`) is not derived, so its opaque
+key blob is kept in the state file. The blob only opens on the machine that
+created it, and like the TPM key it carries no auth value: any process that
+can read the state file as the owning user can ask the enclave to sign. A new
+enclave key must sign a test digest before it is persisted, so a half-working
+enclave falls back to the software key instead of becoming an identity that
+cannot log in.
 
 The software fallback wraps the key with a key derived from the machine's
 public fingerprint (`id.MachineID`). That stops a key file copied to another

@@ -6,6 +6,10 @@
 // wrapped to the machine fingerprint. The private key never leaves the TPM
 // in the first case and never leaves the machine in the second. Every caller
 // namespaces its identity with [SignerOptions.Salt].
+//
+// A caller on a machine with another hardware key store, such as the macOS
+// Secure Enclave, plugs it in through [SignerOptions.Enclave]. It is tried
+// after the TPM and before the software key.
 package tpm
 
 import (
@@ -23,6 +27,8 @@ import (
 const (
 	// MethodTPM identifies a TPM-backed signing key.
 	MethodTPM = "tpm"
+	// MethodEnclave identifies a key held by a [SignerOptions.Enclave].
+	MethodEnclave = "enclave"
 	// MethodSoft identifies a software signing key wrapped to the machine.
 	MethodSoft = "soft"
 )
@@ -37,7 +43,8 @@ type Signer interface {
 	crypto.Signer
 	io.Closer
 
-	// Method reports the signing method, MethodTPM or MethodSoft.
+	// Method reports the signing method, MethodTPM, MethodEnclave or
+	// MethodSoft.
 	Method() string
 	// PEM returns the PKIX PEM encoding of the public key.
 	PEM() []byte
@@ -49,11 +56,14 @@ type SignerOptions struct {
 	// machine share an identity, so every caller keeps its own constant.
 	Salt []byte
 	// StatePath is where the identity state is persisted. Only public
-	// material is stored for TPM keys, software keys also carry their
-	// wrapped private key.
+	// material is stored for TPM keys, enclave keys add their opaque blob,
+	// software keys their wrapped private key.
 	StatePath string
-	// RequireTPM refuses the software fallback.
+	// RequireTPM refuses the software fallback. An enclave key satisfies it.
 	RequireTPM bool
+	// Enclave is the hardware key store tried when no TPM is usable. Nil
+	// means the machine has none.
+	Enclave Enclave
 	// Recreate replaces the key and its state when the persisted identity no
 	// longer matches the machine, instead of failing with
 	// [ErrIdentityChanged]. Interactive callers set it so a re-image does not
@@ -67,9 +77,9 @@ type SignerOptions struct {
 }
 
 // NewSigner loads or creates the machine's signing identity: a TPM key when
-// one is usable, otherwise a machine-wrapped software key (an error when
-// RequireTPM is set). The method is persisted, so an existing software
-// identity is never silently upgraded to a TPM later.
+// one is usable, then an enclave key, otherwise a machine-wrapped software
+// key (an error when RequireTPM is set). The method is persisted, so an
+// existing software identity is never silently upgraded to hardware later.
 func NewSigner(opts SignerOptions) (Signer, error) {
 	if len(opts.Salt) == 0 {
 		return nil, errors.New("tpm: salt is required")
@@ -87,6 +97,8 @@ func NewSigner(opts SignerOptions) (Signer, error) {
 		switch st.Method {
 		case MethodTPM:
 			return openTPMIdentity(opts, st)
+		case MethodEnclave:
+			return openEnclave(opts, st)
 		case MethodSoft:
 			if opts.RequireTPM {
 				return nil, errors.New(
@@ -103,19 +115,28 @@ func NewSigner(opts SignerOptions) (Signer, error) {
 	if tpmErr == nil {
 		return s, nil
 	}
-	if opts.RequireTPM {
-		return nil, fmt.Errorf("tpm: no TPM available: %w", tpmErr)
+	hwErr := fmt.Errorf("tpm: no TPM available: %w", tpmErr)
+	if opts.Enclave != nil {
+		e, encErr := createEnclave(opts)
+		if encErr == nil {
+			return e, nil
+		}
+		hwErr = errors.Join(hwErr, encErr)
 	}
-	slog.Warn("no usable TPM, using a machine-wrapped software key", "error", tpmErr)
+	if opts.RequireTPM {
+		return nil, hwErr
+	}
+	slog.Warn("no usable hardware key store, using a machine-wrapped software key", "error", hwErr)
 	fallback, softErr := openSoft(opts, nil)
 	if softErr != nil {
-		return nil, errors.Join(fmt.Errorf("tpm: no TPM available: %w", tpmErr), softErr)
+		return nil, errors.Join(hwErr, softErr)
 	}
 	return fallback, nil
 }
 
 // IdentityMethod reports the signing method persisted at statePath
-// (MethodTPM or MethodSoft) without loading or creating any key material.
+// (MethodTPM, MethodEnclave or MethodSoft) without loading or creating any
+// key material.
 // It returns "" when no identity exists yet.
 func IdentityMethod(statePath string) string {
 	st, err := loadState(statePath)

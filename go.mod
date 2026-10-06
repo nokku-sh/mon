@@ -7,8 +7,8 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/google/go-tpm v0.9.8
 	golang.org/x/crypto v0.56.0
-	golang.org/x/sys v0.47.0
-	google.golang.org/protobuf v1.36.11
+	golang.org/x/sys v0.48.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require github.com/google/go-tpm-tools v0.3.13-0.20230620182252-4639ecce2aba // indirect

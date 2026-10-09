@@ -258,7 +258,7 @@ func TestWrapUnaryRetriesAfterStaleNonce(t *testing.T) {
 }
 
 func TestNewHTTPClient(t *testing.T) {
-	c, err := NewHTTPClient(true, 3*time.Second)
+	c, err := NewHTTPClient(nil, 3*time.Second)
 	if err != nil {
 		t.Fatalf("NewHTTPClient: %v", err)
 	}
@@ -271,5 +271,8 @@ func TestNewHTTPClient(t *testing.T) {
 	}
 	if tr.TLSClientConfig == nil || tr.TLSClientConfig.MinVersion != tls.VersionTLS13 {
 		t.Fatal("client must require TLS 1.3")
+	}
+	if tr.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("client must verify the server")
 	}
 }

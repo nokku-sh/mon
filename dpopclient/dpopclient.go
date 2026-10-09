@@ -8,6 +8,7 @@ package dpopclient
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -79,8 +80,10 @@ func New(
 }
 
 // NewHTTPClient builds the HTTP/2-only, TLS 1.3 minimum client the control
-// plane expects. dialTimeout bounds connection setup.
-func NewHTTPClient(insecure bool, dialTimeout time.Duration) (*http.Client, error) {
+// plane expects. roots is what the server certificate is verified against,
+// nil means the system roots. See the trust package for a server behind a
+// private CA. dialTimeout bounds connection setup.
+func NewHTTPClient(roots *x509.CertPool, dialTimeout time.Duration) (*http.Client, error) {
 	proto := new(http.Protocols)
 	proto.SetHTTP1(false)
 	proto.SetHTTP2(true)
@@ -92,13 +95,7 @@ func NewHTTPClient(insecure bool, dialTimeout time.Duration) (*http.Client, erro
 	}
 	t := base.Clone()
 	t.Protocols = proto
-	if t.TLSClientConfig == nil {
-		t.TLSClientConfig = new(tls.Config)
-	}
-	t.TLSClientConfig.MinVersion = tls.VersionTLS13
-	if insecure {
-		t.TLSClientConfig.InsecureSkipVerify = true // #nosec G402
-	}
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
 	t.DialContext = (&net.Dialer{
 		Timeout:   dialTimeout,
 		KeepAlive: 30 * time.Second,

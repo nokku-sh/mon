@@ -13,7 +13,12 @@ have exactly one implementation.
   the server can bind a session to the key thumbprint without pre-registration.
 - **dpopclient** - the DPoP-authenticated connect client stack (interceptors,
   nonce and canonical-URL learning, one retry on a stale nonce) and the
-  HTTP/2-only TLS 1.3 transport both binaries share.
+  HTTP/2-only TLS 1.3 transport both binaries share. It always verifies the
+  server.
+- **trust** - trust in a server whose certificate comes from a private CA.
+  The client fetches the CA the server advertises at `/ca.crt`, keeps it only
+  when it matches a pin it got out of band, and verifies the usual way from
+  then on. There is no way to skip verification.
 - **id** - stable machine fingerprint from the hardware machine ID
   (hostname fallback), HMAC'd so the raw identifier is never exposed. Used
   only as the software signing key's wrap password.
